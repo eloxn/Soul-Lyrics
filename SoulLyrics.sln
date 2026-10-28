@@ -1,0 +1,18 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SoulLyrics", "SoulLyrics\SoulLyrics.csproj", "{B4A7D4F1-70F6-4A80-AB91-3B9D83FCE810}"
+EndProject
+Global
+    GlobalSection(SolutionConfigurationPlatforms) = preSolution
+        Debug|Any CPU = Debug|Any CPU
+        Release|Any CPU = Release|Any CPU
+    EndGlobalSection
+    GlobalSection(ProjectConfigurationPlatforms) = postSolution
+        {B4A7D4F1-70F6-4A80-AB91-3B9D83FCE810}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {B4A7D4F1-70F6-4A80-AB91-3B9D83FCE810}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {B4A7D4F1-70F6-4A80-AB91-3B9D83FCE810}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {B4A7D4F1-70F6-4A80-AB91-3B9D83FCE810}.Release|Any CPU.Build.0 = Release|Any CPU
+    EndGlobalSection
+EndGlobal
