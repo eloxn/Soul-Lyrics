@@ -1,0 +1,12 @@
+<Application x:Class="SoulLyrics.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <SolidColorBrush x:Key="BackgroundBrush" Color="#0D0D12"/>
+        <SolidColorBrush x:Key="PanelBrush" Color="#17171F"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#FF5C9A"/>
+        <SolidColorBrush x:Key="MutedBrush" Color="#9292A4"/>
+        <SolidColorBrush x:Key="TextBrush" Color="#F7F7FB"/>
+    </Application.Resources>
+</Application>
