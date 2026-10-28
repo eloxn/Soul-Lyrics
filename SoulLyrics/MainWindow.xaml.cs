@@ -1,8 +1,10 @@
 using Microsoft.Win32;
 using NAudio.Wave;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -17,11 +19,12 @@ public partial class MainWindow : Window
     private readonly List<LyricLine> _lyrics = new();
     private LyricsOverlay? _overlay;
     private int _activeLine = -1;
+    private readonly List<TextBlock> _lineBlocks = new();
 
     public MainWindow()
     {
         InitializeComponent();
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(35) };
         _timer.Tick += (_, _) => UpdatePlaybackUi();
         _timer.Start();
     }
@@ -34,7 +37,6 @@ public partial class MainWindow : Window
             Filter = "Audio files|*.mp3;*.wav;*.aiff;*.aif;*.wma;*.aac;*.m4a;*.flac|All files|*.*"
         };
         if (dialog.ShowDialog() != true) return;
-
         try
         {
             StopAndDisposeAudio();
@@ -53,7 +55,6 @@ public partial class MainWindow : Window
             PlayPauseButton.Content = "Ⅱ  Pause";
             _output.Play();
             StatusText.Text = "PLAYING  ·  LOCAL AUDIO";
-
             var automaticLrc = Path.ChangeExtension(dialog.FileName, ".lrc");
             if (File.Exists(automaticLrc)) LoadLrc(automaticLrc);
             else
@@ -103,6 +104,8 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() == true) LoadLrc(dialog.FileName);
     }
 
+    // Supports ordinary LRC line timestamps and Enhanced LRC word timestamps, e.g.
+    // [00:12.00]<00:12.00>Hello <00:12.30>world
     private void LoadLrc(string path)
     {
         try
@@ -111,23 +114,41 @@ public partial class MainWindow : Window
             foreach (var raw in File.ReadAllLines(path))
             {
                 var line = raw.Trim();
-                var matches = System.Text.RegularExpressions.Regex.Matches(line, @"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]");
-                if (matches.Count == 0) continue;
-                var textStart = matches[^1].Index + matches[^1].Length;
-                var text = line[textStart..].Trim();
-                if (string.IsNullOrWhiteSpace(text)) continue;
-                foreach (System.Text.RegularExpressions.Match match in matches)
+                var lineTags = Regex.Matches(line, @"\[(\d{1,2}):(\d{2})(?:[.](\d{1,3}))?\]");
+                if (lineTags.Count == 0) continue;
+                var baseTime = ParseTimestamp(lineTags[0].Groups[1].Value, lineTags[0].Groups[2].Value, lineTags[0].Groups[3].Value);
+                var textStart = lineTags[^1].Index + lineTags[^1].Length;
+                var body = line[textStart..].Trim();
+                if (string.IsNullOrWhiteSpace(body)) continue;
+
+                var wordTags = Regex.Matches(body, @"<((?:\d{1,2}):(?:\d{2})(?:[.](?:\d{1,3}))?)>");
+                var words = new List<LyricWord>();
+                if (wordTags.Count > 0)
                 {
-                    var minutes = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-                    var seconds = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
-                    var fraction = match.Groups[3].Success ? match.Groups[3].Value : "0";
-                    var milliseconds = int.Parse(fraction.PadRight(3, '0')[..3], CultureInfo.InvariantCulture);
-                    _lyrics.Add(new LyricLine(TimeSpan.FromMinutes(minutes) + TimeSpan.FromSeconds(seconds) + TimeSpan.FromMilliseconds(milliseconds), text));
+                    for (var i = 0; i < wordTags.Count; i++)
+                    {
+                        var tag = wordTags[i];
+                        var wordStart = tag.Index + tag.Length;
+                        var wordEnd = i + 1 < wordTags.Count ? wordTags[i + 1].Index : body.Length;
+                        var wordText = body[wordStart..wordEnd];
+                        if (string.IsNullOrEmpty(wordText)) continue;
+                        var stamp = tag.Groups[1].Value.Split(':');
+                        var sec = stamp[1].Split('.');
+                        var fraction = sec.Length > 1 ? sec[1] : "0";
+                        words.Add(new LyricWord(ParseTimestamp(stamp[0], sec[0], fraction), wordText));
+                    }
                 }
+                var plainText = wordTags.Count > 0
+                    ? Regex.Replace(body, @"<\d{1,2}:\d{2}(?:[.]\d{1,3})?>", "")
+                    : body;
+                _lyrics.Add(new LyricLine(baseTime, plainText, words));
             }
             _lyrics.Sort((a, b) => a.Time.CompareTo(b.Time));
             RenderLyrics();
-            StatusText.Text = $"LYRICS LOADED  ·  {_lyrics.Count} TIMED LINES";
+            var wordCount = _lyrics.Sum(x => x.Words.Count);
+            StatusText.Text = wordCount > 0
+                ? $"WORD-TIMED LYRICS  ·  {_lyrics.Count} LINES / {wordCount} WORDS"
+                : $"LINE-TIMED LYRICS  ·  {_lyrics.Count} LINES";
             _overlay?.SetLyrics(_lyrics);
         }
         catch (Exception ex)
@@ -136,32 +157,41 @@ public partial class MainWindow : Window
         }
     }
 
+    private static TimeSpan ParseTimestamp(string minutes, string seconds, string fraction)
+    {
+        var ms = int.Parse(string.IsNullOrEmpty(fraction) ? "0" : fraction.PadRight(3, '0')[..3], CultureInfo.InvariantCulture);
+        return TimeSpan.FromMinutes(int.Parse(minutes, CultureInfo.InvariantCulture))
+             + TimeSpan.FromSeconds(int.Parse(seconds, CultureInfo.InvariantCulture))
+             + TimeSpan.FromMilliseconds(ms);
+    }
+
     private void RenderLyrics()
     {
         LyricsLinesPanel.Children.Clear();
+        _lineBlocks.Clear();
         if (_lyrics.Count == 0)
         {
             LyricsLinesPanel.Children.Add(new TextBlock
             {
-                Text = "No timestamped lyrics loaded.",
-                FontSize = 20,
+                Text = "No timestamped lyrics loaded.", FontSize = 20,
                 Foreground = new SolidColorBrush(Color.FromRgb(146, 146, 164)),
-                TextAlignment = TextAlignment.Center,
-                TextWrapping = TextWrapping.Wrap,
+                TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(8, 30, 8, 12)
             });
             return;
         }
         foreach (var lyric in _lyrics)
         {
-            LyricsLinesPanel.Children.Add(new TextBlock
+            var block = new TextBlock
             {
-                Text = lyric.Text, Tag = lyric, FontSize = 19,
-                FontWeight = FontWeights.Medium,
+                Tag = lyric, FontSize = 19, FontWeight = FontWeights.Medium,
                 Foreground = new SolidColorBrush(Color.FromRgb(116, 116, 132)),
                 TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(4, 9, 4, 9)
-            });
+            };
+            block.Text = lyric.Text;
+            LyricsLinesPanel.Children.Add(block);
+            _lineBlocks.Add(block);
         }
         _activeLine = -1;
     }
@@ -172,6 +202,7 @@ public partial class MainWindow : Window
         if (_reader.TotalTime.TotalSeconds > 0)
             SeekSlider.Value = Math.Clamp(_reader.CurrentTime.TotalSeconds / _reader.TotalTime.TotalSeconds * 100, 0, 100);
         CurrentTimeText.Text = FormatTime(_reader.CurrentTime);
+
         var active = -1;
         for (var i = 0; i < _lyrics.Count; i++)
         {
@@ -181,15 +212,36 @@ public partial class MainWindow : Window
         if (active != _activeLine)
         {
             _activeLine = active;
-            for (var i = 0; i < LyricsLinesPanel.Children.Count; i++)
+            for (var i = 0; i < _lineBlocks.Count; i++)
             {
-                if (LyricsLinesPanel.Children[i] is not TextBlock block) continue;
+                var block = _lineBlocks[i];
                 block.Foreground = new SolidColorBrush(i == active ? Color.FromRgb(255, 92, 154) : Color.FromRgb(116, 116, 132));
                 block.FontSize = i == active ? 23 : 19;
                 block.FontWeight = i == active ? FontWeights.Bold : FontWeights.Medium;
             }
         }
+
+        // Rebuild inline word runs only for the active line, allowing word-by-word highlighting.
+        if (active >= 0 && active < _lineBlocks.Count)
+            RenderActiveWords(_lineBlocks[active], _lyrics[active], _reader.CurrentTime);
         _overlay?.UpdatePosition(_reader.CurrentTime);
+    }
+
+    private static void RenderActiveWords(TextBlock block, LyricLine lyric, TimeSpan position)
+    {
+        if (lyric.Words.Count == 0) { block.Text = lyric.Text; return; }
+        block.Inlines.Clear();
+        for (var i = 0; i < lyric.Words.Count; i++)
+        {
+            var word = lyric.Words[i];
+            var end = i + 1 < lyric.Words.Count ? lyric.Words[i + 1].Time : TimeSpan.MaxValue;
+            var isActive = position >= word.Time && position < end;
+            block.Inlines.Add(new Run(word.Text)
+            {
+                Foreground = new SolidColorBrush(isActive ? Color.FromRgb(255, 255, 255) : Color.FromRgb(255, 92, 154)),
+                FontWeight = isActive ? FontWeights.ExtraBold : FontWeights.SemiBold
+            });
+        }
     }
 
     private void SeekSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -228,4 +280,5 @@ public partial class MainWindow : Window
     }
 }
 
-public sealed record LyricLine(TimeSpan Time, string Text);
+public sealed record LyricWord(TimeSpan Time, string Text);
+public sealed record LyricLine(TimeSpan Time, string Text, List<LyricWord> Words);
